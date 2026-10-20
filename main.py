@@ -6,7 +6,7 @@ import pyppeteer
 import asyncio
 import pytz
 channels = [1293281255227527212]
-token = ""
+TOKEN = os.getenv("BOT_TOKEN")
 
 locale_to_timezone = {
     discord.Locale.american_english: 'America/New_York',        # en-US
