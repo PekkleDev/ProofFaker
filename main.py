@@ -5,7 +5,7 @@ import datetime, random, traceback, os
 import pyppeteer
 import asyncio
 import pytz
-channels = [1293281255227527212]
+channels = [1560908743863042129]
 token = ""
 
 locale_to_timezone = {
