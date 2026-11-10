@@ -1,0 +1,30 @@
+[phases.setup]
+aptPkgs = [
+    "chromium-browser",
+    "fonts-liberation",
+    "libappindicator3-1",
+    "libasound2",
+    "libatk-bridge2.0-0",
+    "libatk1.0-0",
+    "libcups2",
+    "libdrm2",
+    "libgbm1",
+    "libgtk-3-0",
+    "libnspr4",
+    "libnss3",
+    "libx11-xcb1",
+    "libxcomposite1",
+    "libxdamage1",
+    "libxrandr2",
+    "xdg-utils",
+    "libxshmfence1",
+    "libx11-6",
+    "libxext6",
+    "libxfixes3"
+]
+
+[phases.install]
+cmds = ["pip install -r requirements.txt"]
+
+[start]
+cmd = "python main.py"

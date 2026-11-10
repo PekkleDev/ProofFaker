@@ -1,945 +1,487 @@
+import string
+import os
+import random
 import discord
+from discord.ext import commands
 from discord import app_commands
-from discord.ui import View, Select
-import datetime, random, traceback, os
-import pyppeteer
-import asyncio
-import pytz
-channels = [1293281255227527212]
-token = ""
 
-locale_to_timezone = {
-    discord.Locale.american_english: 'America/New_York',        # en-US
-    discord.Locale.british_english: 'Europe/London',            # en-GB
-    discord.Locale.bulgarian: 'Europe/Sofia',                   # bg
-    discord.Locale.chinese: 'Asia/Shanghai',                    # zh-CN
-    discord.Locale.taiwan_chinese: 'Asia/Taipei',               # zh-TW
-    discord.Locale.croatian: 'Europe/Zagreb',                   # hr
-    discord.Locale.czech: 'Europe/Prague',                      # cs
-    discord.Locale.indonesian: 'Asia/Jakarta',                  # id
-    discord.Locale.danish: 'Europe/Copenhagen',                 # da
-    discord.Locale.dutch: 'Europe/Amsterdam',                   # nl
-    discord.Locale.finnish: 'Europe/Helsinki',                  # fi
-    discord.Locale.french: 'Europe/Paris',                      # fr
-    discord.Locale.german: 'Europe/Berlin',                     # de
-    discord.Locale.greek: 'Europe/Athens',                      # el
-    discord.Locale.hindi: 'Asia/Kolkata',                      # hi
-    discord.Locale.hungarian: 'Europe/Budapest',                # hu
-    discord.Locale.italian: 'Europe/Rome',                      # it
-    discord.Locale.japanese: 'Asia/Tokyo',                      # ja
-    discord.Locale.korean: 'Asia/Seoul',                        # ko
-    discord.Locale.latin_american_spanish: 'America/Mexico_City', # es-419
-    discord.Locale.lithuanian: 'Europe/Vilnius',                # lt
-    discord.Locale.norwegian: 'Europe/Oslo',                    # no
-    discord.Locale.polish: 'Europe/Warsaw',                     # pl
-    discord.Locale.brazil_portuguese: 'America/Sao_Paulo',      # pt-BR
-    discord.Locale.romanian: 'Europe/Bucharest',                # ro
-    discord.Locale.russian: 'Europe/Moscow',                    # ru
-    discord.Locale.spain_spanish: 'Europe/Madrid',              # es-ES
-    discord.Locale.swedish: 'Europe/Stockholm',                 # sv-SE
-    discord.Locale.thai: 'Asia/Bangkok',                        # th
-    discord.Locale.turkish: 'Europe/Istanbul',                  # tr
-    discord.Locale.ukrainian: 'Europe/Kyiv',                    # uk
-    discord.Locale.vietnamese: 'Asia/Ho_Chi_Minh',              # vi
-}
+# ==========================================
+# AYARLAR
+# ==========================================
 
-def get_current_time_in_locale(interaction: discord.Interaction):
-    user_locale = interaction.locale  # Get the user's locale
-    timezone_str = locale_to_timezone.get(user_locale, 'UTC')  # Default to UTC if locale not found
-    timezone = pytz.timezone(timezone_str)
-    
-    # Get the current time in the specified timezone
-    current_time = datetime.datetime.now(timezone)
-    return current_time
+TOKEN = os.getenv("TOKEN")
 
-def generate_time_range(interaction):
-    current_time = get_current_time_in_locale(interaction)
-    
-    random_minutes = random.randint(2, 7)
-    new_time = current_time + datetime.timedelta(minutes=random_minutes)
-    
-    # Adjust if the new time minute exceeds 59
-    if new_time.minute > 59:
-        new_time = new_time.replace(hour=new_time.hour + 1, minute=new_time.minute % 60)
-    
-    current_time_format = current_time.strftime('%I:%M %p').lstrip('0')
-    new_time_format = new_time.strftime('%I:%M %p').lstrip('0')
-    original_time_format = current_time.strftime("%d %B %Y")
-    
-    return current_time_format, new_time_format, original_time_format
+PROOF_CHANNEL_ID = 1563982186011435232
+STATUS_ROLE_ID = 1563982169100132484
+STATUS_LOG_CHANNEL_ID = 1563982173491564594
+OWNER_ID = 1547736123189502062
 
-class Client(discord.Client):
-    def __init__(self):
-        super().__init__(intents=discord.Intents.all())
-        self.tree = app_commands.CommandTree(self)
+# Boş bırakırsan otomatik algılama denenir
+GUILD_TAG = "free"
 
-    async def setup_hook(self):
-        GUILD_ID = 1293281234037772420  # Replace with your guild ID
-        guild = discord.Object(id=GUILD_ID)
-        await self.tree.sync(guild=guild)
-
-    async def on_ready(self):
-        await self.change_presence(activity=discord.Game(name="Use /proof to see the commands"))
-        print(f"{self.user} ({self.user.id}) is ready!")
-
-client = Client()
+REQUIRED_STATUS_TEXTS = [
+    "/trnitro",
+    ".gg/trnitro",
+    "@trnitro"
+]
 
 
-@client.event
-async def on_message(message):
-    if message.author.bot:
+
+
+# ==========================================
+# BOT KURULUMU
+# Ayarlar bölümünün altına yapıştır.
+# ==========================================
+
+intents = discord.Intents.default()
+intents.members = True
+intents.presences = True
+
+bot = commands.Bot(command_prefix="!", intents=intents)
+
+
+def generate_code(prefix):
+    chars = string.ascii_uppercase + string.digits
+    parts = [
+        "".join(random.choices(chars, k=4))
+        for _ in range(3)
+    ]
+    return f"{prefix}-" + "-".join(parts)
+
+
+# ==========================================
+# GUILD TAG KONTROLÜ
+# ==========================================
+
+def has_server_guild_tag(member):
+    primary_guild = getattr(member, "primary_guild", None)
+
+    if primary_guild is None:
+        return False
+
+    identity_guild_id = getattr(
+        primary_guild, "identity_guild_id", None
+    )
+    identity_enabled = getattr(
+        primary_guild, "identity_enabled", False
+    )
+    tag = getattr(primary_guild, "tag", None)
+
+    if str(identity_guild_id) != str(member.guild.id):
+        return False
+
+    if identity_enabled is not True or not tag:
+        return False
+
+    if GUILD_TAG:
+        return tag.casefold() == GUILD_TAG.casefold()
+
+    return True
+
+
+# ==========================================
+# DURUM METNİ KONTROLÜ
+# ==========================================
+
+def has_required_status(member):
+    for activity in getattr(member, "activities", []):
+        if isinstance(activity, discord.CustomActivity):
+            status_text = str(activity.state or "").casefold()
+
+            if any(
+                text.casefold() in status_text
+                for text in REQUIRED_STATUS_TEXTS
+            ):
+                return True
+
+    return False
+
+
+# ==========================================
+# ORTAK ROL GÜNCELLEME + LOG
+# ==========================================
+
+async def update_special_role(member):
+    if member.bot:
         return
-    if message.content.startswith(client.user.mention):
-        await message.channel.send(f"{message.author.mention} /proof")
 
+    role = member.guild.get_role(STATUS_ROLE_ID)
+    if role is None:
+        print(f"Rol bulunamadı: {STATUS_ROLE_ID}")
+        return
 
+    status_match = has_required_status(member)
+    tag_match = has_server_guild_tag(member)
 
+    print(
+        f"[ROL KONTROL] {member} | "
+        f"Durum: {status_match} | "
+        f"Guild Tag: {tag_match} | "
+        f"Rol ID: {STATUS_ROLE_ID}"
+    )
 
+    should_have_role = status_match or tag_match
+    already_has_role = role in member.roles
 
+    if should_have_role == already_has_role:
+        return
 
+    log_channel = member.guild.get_channel(STATUS_LOG_CHANNEL_ID)
 
+    try:
+        if should_have_role:
+            reasons = []
 
+            if status_match:
+                reasons.append("Belirlenen durum metni")
 
+            if tag_match:
+                reasons.append("Sunucunun Guild Tag'i")
 
+            await member.add_roles(
+                role,
+                reason=" / ".join(reasons)
+            )
 
+            title = "✅ Otomatik Rol Verildi"
+            color = discord.Color.green()
+            detail = "Rol sebebi: " + " ve ".join(reasons)
 
-
-class NitroPage:
-    def __init__(self, gifter_username, receiver_username, gifter_message, receiver_message, gifter_avatar_url, receiver_avatar_url, timestamp_1, timestamp_2, full_date, claimed):
-        self.actual_datetime = datetime.datetime.now()
-        self.proof = ""
-
-
-        self.gifter_username = gifter_username.replace('<', '').replace('>', '').replace('script', '')
-        self.receiver_username = receiver_username.replace('<', '').replace('>', '').replace('script', '')
-
-        self.gifter_message = gifter_message.replace('<', '').replace('>', '').replace('script', '')
-        self.receiver_message = receiver_message.replace('<', '').replace('>', '').replace('script', '')
-
-        self.gifter_avatar_url = gifter_avatar_url
-        self.receiver_avatar_url = receiver_avatar_url
-
-        self.timestamp_1 = timestamp_1
-        self.timestamp_2 = timestamp_2
-        self.full_date = full_date
-        if self.full_date.startswith('0'):
-            self.full_date = self.full_date.replace('0', '', 1)
-
-        self.claimed = claimed
-
-    def get_proof(self):
-        if self.claimed==True:
-            filename = "assets/nitroproof.html"
         else:
-            filename = "assets/nitroproofclaimed.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('GIFTER_USERNAME', self.gifter_username)
-            self.html_content = self.html_content.replace('RECEIVER_USERNAME', self.receiver_username)
-            self.html_content = self.html_content.replace('GIFTER_MESSAGE', self.gifter_message+' ' if self.gifter_message!="" else self.gifter_message)
-            self.html_content = self.html_content.replace('RECEIVER_MESSAGE', self.receiver_message)
-            self.html_content = self.html_content.replace('GIFTER_AVATAR_URL', self.gifter_avatar_url)
-            self.html_content = self.html_content.replace('RECEIVER_AVATAR_URL', self.receiver_avatar_url)
-            self.html_content = self.html_content.replace('TIMESTAMP_1', self.timestamp_1)
-            self.html_content = self.html_content.replace('TIMESTAMP_2', self.timestamp_2)
-            self.html_content = self.html_content.replace('FULL_DATE', self.full_date)
-            self.html_content = self.html_content.replace('KJASNZXCJD', f'{random.randint(36,47)}')
-        return self.html_content
+            await member.remove_roles(
+                role,
+                reason="Durum metni ve Guild Tag koşulları sağlanmıyor"
+            )
 
-class NitroModal(discord.ui.Modal, title='Nitro proof generator'):
-    type = discord.ui.TextInput(
-        label="Nitro type (leave empty for unclaimed)",
-        placeholder="unclaimed/claimed",
-        style=discord.TextStyle.short,
-        required=False,
+            title = "➖ Otomatik Rol Kaldırıldı"
+            color = discord.Color.red()
+            detail = (
+                "Üyenin belirlenen durum metni ve sunucu Guild Tag'i "
+                "artık eşleşmiyor."
+            )
+
+        embed = discord.Embed(
+            title=title,
+            description=detail,
+            color=color,
+            timestamp=discord.utils.utcnow()
+        )
+        embed.add_field(
+            name="Üye",
+            value=f"{member.mention} (`{member.id}`)",
+            inline=False
+        )
+        embed.add_field(
+            name="Rol",
+            value=role.mention,
+            inline=True
+        )
+
+        if log_channel is not None:
+            await log_channel.send(embed=embed)
+
+    except discord.Forbidden:
+        print(
+            "Rol işlemi başarısız. Botun Manage Roles iznini "
+            "ve rol sırasını kontrol et."
+        )
+    except discord.HTTPException as error:
+        print(f"Otomatik rol hatası: {error}")
+
+
+# ==========================================
+# /NITRO
+# ==========================================
+
+@bot.tree.command(name="nitro", description="Nitro kodu oluştur.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.choices(
+    tur=[
+        app_commands.Choice(name="Basic", value="Basic"),
+        app_commands.Choice(name="Boost", value="Boost"),
+    ],
+    sure=[
+        app_commands.Choice(name="Aylık", value="Aylık"),
+        app_commands.Choice(name="Yıllık", value="Yıllık"),
+    ]
+)
+async def nitro(
+    interaction: discord.Interaction,
+    tur: app_commands.Choice[str],
+    sure: app_commands.Choice[str]
+):
+    embed = discord.Embed(
+        title="🎁 Nitro Ödülü",
+        color=discord.Color.gold()
     )
-
-    gifteridd = discord.ui.TextInput(
-        label="Gifter's ID (leave empty for yours)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
+    embed.add_field(name="Tür", value=tur.value, inline=True)
+    embed.add_field(name="Süre", value=sure.value, inline=True)
+    embed.add_field(
+        name="Kod",
+        value=f"```{generate_code('NITRO')}```",
+        inline=False
     )
-
-    giftertext = discord.ui.TextInput(
-        label="Gifter's message",
-        placeholder="Congratulations! You won the giveaway, here's your nitro: ",
-        style=discord.TextStyle.short,
-        required=False,
+    embed.add_field(
+        name="📌 Nasıl kullanılır?",
+        value=(
+            "Discord Kullanıcı Ayarları → Hediye Envanteri "
+            "bölümüne girip geçerli bir hediye kodunu kullan."
+        ),
+        inline=False
     )
+    await interaction.response.send_message(embed=embed)
 
-    receiveridd = discord.ui.TextInput(
-        label="Receiver's ID (leave empty for random)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
+
+# ==========================================
+# /ROBUX
+# ==========================================
+
+@bot.tree.command(name="robux", description="Robux ödül kodu oluştur.")
+@app_commands.default_permissions(administrator=True)
+@app_commands.checks.has_permissions(administrator=True)
+@app_commands.choices(
+    miktar=[
+        app_commands.Choice(name="450 Robux", value="450"),
+        app_commands.Choice(name="1500 Robux", value="1500"),
+        app_commands.Choice(name="4500 Robux", value="4500"),
+        app_commands.Choice(name="10000 Robux", value="10000"),
+        app_commands.Choice(name="5000 Robux", value="5000"),
+    ],
+    sure=[
+        app_commands.Choice(name="Aylık", value="Aylık"),
+        app_commands.Choice(name="Yıllık", value="Yıllık"),
+    ]
+)
+async def robux(
+    interaction: discord.Interaction,
+    miktar: app_commands.Choice[str],
+    sure: app_commands.Choice[str]
+):
+    embed = discord.Embed(
+        title="💰 Robux Ödülü",
+        color=discord.Color.green()
     )
-
-    receivertext = discord.ui.TextInput(
-        label="Receiver's message",
-        style=discord.TextStyle.short,
-        placeholder='OMG! Thanks!',
-        required=True,
+    embed.add_field(
+        name="Miktar",
+        value=f"{miktar.value} Robux",
+        inline=True
     )
+    embed.add_field(name="Süre", value=sure.value, inline=True)
+    embed.add_field(
+        name="Kod",
+        value=f"```{generate_code('ROBUX')}```",
+        inline=False
+    )
+    embed.add_field(
+        name="📌 Nasıl kullanılır?",
+        value=(
+            "Gerçek Roblox hediye kartları için resmi kod "
+            "kullanma sayfasını ziyaret et:\n"
+            "https://www.roblox.com/redeem"
+        ),
+        inline=False
+    )
+    await interaction.response.send_message(embed=embed)
 
-    async def on_submit(self, interaction: discord.Interaction):
-        self.note = ""
+
+# ==========================================
+# /PROOF — YALNIZCA OWNER
+# ==========================================
+
+@bot.tree.command(name="proof", description="Ödül görselini kanala gönder.")
+@app_commands.describe(gorsel_url="Görselin HTTPS bağlantısı")
+async def proof(
+    interaction: discord.Interaction,
+    gorsel_url: str
+):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(
+            "❌ Bu komutu yalnızca bot sahibi kullanabilir.",
+            ephemeral=True
+        )
+        return
+
+    if not gorsel_url.startswith("https://"):
+        await interaction.response.send_message(
+            "HTTPS bağlantısı kullan.",
+            ephemeral=True
+        )
+        return
+
+    channel = bot.get_channel(PROOF_CHANNEL_ID)
+
+    if channel is None:
         try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
+            channel = await bot.fetch_channel(PROOF_CHANNEL_ID)
+        except discord.HTTPException:
+            await interaction.response.send_message(
+                "Kanal bulunamadı.",
+                ephemeral=True
+            )
+            return
 
-            if self.type.value == "claimed":
-                self.nitroclaimed = True
-            else:
-                self.nitroclaimed = False
+    embed = discord.Embed(
+        title="🏆 ÖDÜL KAZANILDI!",
+        description=(
+            "✨ Tebrikler!\n\n"
+            "Bir kullanıcı davet yaparak ödül kazandı!\n"
+            "🎉 Katılımın ve desteğin için teşekkür ederiz."
+        ),
+        color=discord.Color.gold()
+    )
+    embed.set_image(url=gorsel_url)
+    embed.set_footer(text="Ödül Sistemi")
 
-            self.gifter = interaction.user
-            if self.gifteridd.value != "":
-                try:
-                    self.gifter = await client.fetch_user(int(self.gifteridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
-            if self.gifter.global_name == None:
-                self.gifter_globalname = self.gifter.name
-            else:
-                self.gifter_globalname = self.gifter.global_name
-
-
-            members = await interaction.guild.chunk()
-            self.receiver = random.choice(members)
-            if self.receiveridd.value != "":
-                try:
-                    self.receiver = await client.fetch_user(int(self.receiveridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
-
-
-            if self.receiver.global_name == None:
-                self.receiver_globalname = self.receiver.name
-            else:
-                self.receiver_globalname = self.receiver.global_name
-
-            self.gifter_message = self.giftertext.value
-            self.receiver_message = self.receivertext.value
-
-            if not self.gifter.avatar:
-                self.gifter_avatar = self.gifter.default_avatar.url
-            else:
-                self.gifter_avatar = self.gifter.avatar.url
-
-            if not self.receiver.avatar:
-                self.receiver_avatar = self.receiver.default_avatar.url
-            else:
-                self.receiver_avatar = self.receiver.avatar.url
-
-            times = generate_time_range(interaction)
-
-            self.timestamp_1 = times[0]
-            self.timestamp_2 = times[1]
-            self.full_date = times[2]
-            proof = NitroPage(self.gifter_globalname, self.receiver_globalname, self.gifter_message, self.receiver_message, self.gifter_avatar, self.receiver_avatar, self.timestamp_1, self.timestamp_2, self.full_date, self.nitroclaimed).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-            
-            await page.setViewport({'width': 1300, 'height': 500})
-
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.goto(absolute_path)
-            screenshot_options = {
-                'path': 'proof.png',
-                'clip': {
-                    'x': random.randint(1, 8),
-                    'y': random.randint(75,83),
-                    'width': random.randint(850,1100),
-                    'height': random.randint(400,420)
-                }
-            }
-            await page.screenshot(screenshot_options)
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description=f"> **Please check your DMs!** {self.note if self.note else ''}")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure you provided valid information and try again. Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
-
-@client.tree.command(description='Generate proof for a nitro giveaway.')
-async def nitroproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
+    try:
+        await channel.send(embed=embed)
+    except (discord.HTTPException, discord.Forbidden):
+        await interaction.response.send_message(
+            "Mesaj gönderilemedi; kanal izinlerini kontrol et.",
+            ephemeral=True
+        )
         return
-    await interaction.response.send_modal(NitroModal())
 
-
-class RobuxPage:
-    def __init__(self, gifter_username, receiver_username, receiver_message, gifter_avatar_url, receiver_avatar_url, timestamp_1, timestamp_2, full_date):
-        self.actual_datetime = datetime.datetime.now()
-        self.proof = ""
-
-    
-
-        self.gifter_username = gifter_username.replace('<', '').replace('>', '').replace('script', '')
-        self.receiver_username = receiver_username.replace('<', '').replace('>', '').replace('script', '')
-
-        self.receiver_message = receiver_message.replace('<', '').replace('>', '').replace('script', '')
-
-        self.gifter_avatar_url = gifter_avatar_url
-        self.receiver_avatar_url = receiver_avatar_url
-
-        self.timestamp_1 = timestamp_1
-        self.timestamp_2 = timestamp_2
-        self.full_date = full_date
-        if self.full_date.startswith('0'):
-            self.full_date = self.full_date.replace('0', '', 1)
-
-
-    def get_proof(self):
-        filename = "assets/robuxproof.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('GIFTER_USERNAME', self.gifter_username)
-            self.html_content = self.html_content.replace('RECEIVER_USERNAME', self.receiver_username)
-            self.html_content = self.html_content.replace('RECEIVER_MESSAGE', self.receiver_message)
-            self.html_content = self.html_content.replace('GIFTER_AVATAR_URL', self.gifter_avatar_url)
-            self.html_content = self.html_content.replace('RECEIVER_AVATAR_URL', self.receiver_avatar_url)
-            self.html_content = self.html_content.replace('TIMESTAMP_1', self.timestamp_1)
-            self.html_content = self.html_content.replace('TIMESTAMP_2', self.timestamp_2)
-            self.html_content = self.html_content.replace('FULL_DATE', self.full_date)
-        return self.html_content
-
-class RobuxModal(discord.ui.Modal, title='Robux proof generator'):
- 
-    gifteridd = discord.ui.TextInput(
-        label="Gifter's ID (leave empty for yours)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
+    await interaction.response.send_message(
+        f"Ödül mesajı <#{PROOF_CHANNEL_ID}> kanalına gönderildi.",
+        ephemeral=True
     )
 
 
+# ==========================================
+# /DMALL — YALNIZCA OWNER
+# ==========================================
 
-    receiveridd = discord.ui.TextInput(
-        label="Receiver's ID (leave empty for random)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
-    )
-    receivertext = discord.ui.TextInput(
-        label="Receiver's message",
-        style=discord.TextStyle.short,
-        placeholder='OMG! Thanks!',
-        required=True,
-    )
+@bot.tree.command(
+    name="dmall",
+    description="Sunucu üyelerine özel mesaj gönder."
+)
+@app_commands.describe(mesaj="Üyelere gönderilecek mesaj")
+async def dmall(
+    interaction: discord.Interaction,
+    mesaj: str
+):
+    if interaction.user.id != OWNER_ID:
+        await interaction.response.send_message(
+            "❌ Bu komutu yalnızca bot sahibi kullanabilir.",
+            ephemeral=True
+        )
+        return
 
+    await interaction.response.defer(ephemeral=True)
 
+    guild = interaction.guild
+    if guild is None:
+        await interaction.followup.send(
+            "Bu komut yalnızca sunucuda kullanılabilir.",
+            ephemeral=True
+        )
+        return
 
-    async def on_submit(self, interaction: discord.Interaction):
-        self.note = ""
+    sent = 0
+    failed = 0
+
+    for member in guild.members:
+        if member.bot:
+            continue
+
         try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
+            embed = discord.Embed(
+                title="📩 Sunucu Mesajı",
+                description=mesaj[:4000],
+                color=discord.Color.blurple()
+            )
+            embed.set_footer(
+                text=f"{guild.name} • Sunucu Duyurusu"
+            )
 
+            await member.send(embed=embed)
+            sent += 1
 
-            self.gifter = interaction.user
-            if self.gifteridd.value != "":
-                try:
-                    self.gifter = await client.fetch_user(int(self.gifteridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
-            if self.gifter.global_name == None:
-                self.gifter_globalname = self.gifter.name
-            else:
-                self.gifter_globalname = self.gifter.global_name
+        except (discord.Forbidden, discord.HTTPException):
+            failed += 1
 
-
-            members = await interaction.guild.chunk()
-            self.receiver = random.choice(members)
-            if self.receiveridd.value != "":
-                try:
-                    self.receiver = await client.fetch_user(int(self.receiveridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
-
-
-            if self.receiver.global_name == None:
-                self.receiver_globalname = self.receiver.name
-            else:
-                self.receiver_globalname = self.receiver.global_name
-
-
-            self.receiver_message = self.receivertext.value
-
-            if not self.gifter.avatar:
-                self.gifter_avatar = self.gifter.default_avatar.url
-            else:
-                self.gifter_avatar = self.gifter.avatar.url
-
-            if not self.receiver.avatar:
-                self.receiver_avatar = self.receiver.default_avatar.url
-            else:
-                self.receiver_avatar = self.receiver.avatar.url
-
-            times = generate_time_range(interaction)
-
-            self.timestamp_1 = times[0]
-            self.timestamp_2 = times[1]
-            self.full_date = times[2]
-            proof = RobuxPage(self.gifter_globalname, self.receiver_globalname, self.receiver_message, self.gifter_avatar, self.receiver_avatar, self.timestamp_1, self.timestamp_2, self.full_date).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-            
-            await page.setViewport({'width': 1300, 'height': 500})
-
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.goto(absolute_path)
-            screenshot_options = {
-                'path': 'proof.png',
-                'clip': {
-                    'x': random.randint(1, 8),
-                    'y': random.randint(130, 135),
-                    'width': random.randint(850, 1100),
-                    'height': random.randint(350, 355)
-                }
-            }
-            await page.screenshot(screenshot_options)
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description=f"> **Please check your DMs!** {self.note if self.note else ''}")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure your DM's are enabled.**\n**> Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
-
-@client.tree.command(description='Generate proof for a robux giveaway.')
-async def robuxproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    await interaction.response.send_modal(RobuxModal())
-
-
-class MinecraftPage:
-    def __init__(self, gifter_username, receiver_username, receiver_message, gifter_avatar_url, receiver_avatar_url, timestamp_1, timestamp_2, full_date):
-        self.actual_datetime = datetime.datetime.now()
-        self.proof = ""
-
-
-        self.gifter_username = gifter_username.replace('<', '').replace('>', '').replace('script', '')
-        self.receiver_username = receiver_username.replace('<', '').replace('>', '').replace('script', '')
-
-        self.receiver_message = receiver_message.replace('<', '').replace('>', '').replace('script', '')
-
-        self.gifter_avatar_url = gifter_avatar_url
-        self.receiver_avatar_url = receiver_avatar_url
-
-        self.timestamp_1 = timestamp_1
-        self.timestamp_2 = timestamp_2
-        self.full_date = full_date
-        if self.full_date.startswith('0'):
-            self.full_date = self.full_date.replace('0', '', 1)
-
-
-    def get_proof(self):
-        filename = "assets/minecraftproof.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('GIFTER_USERNAME', self.gifter_username)
-            self.html_content = self.html_content.replace('RECEIVER_USERNAME', self.receiver_username)
-            self.html_content = self.html_content.replace('RECEIVER_MESSAGE', self.receiver_message)
-            self.html_content = self.html_content.replace('GIFTER_AVATAR_URL', self.gifter_avatar_url)
-            self.html_content = self.html_content.replace('MC_EMAIL', 'mahdi1337@gmail.com'+str(random.randint(1,10000000)))
-            self.html_content = self.html_content.replace('MC_PASS', 'mahdi1337'+str(random.randint(1,10000000)))
-            self.html_content = self.html_content.replace('RECEIVER_AVATAR_URL', self.receiver_avatar_url)
-            self.html_content = self.html_content.replace('TIMESTAMP_1', self.timestamp_1)
-            self.html_content = self.html_content.replace('TIMESTAMP_2', self.timestamp_2)
-            self.html_content = self.html_content.replace('FULL_DATE', self.full_date)
-        return self.html_content
-
-class MinecraftModal(discord.ui.Modal, title='Minecraft proof generator'):
-    gifteridd = discord.ui.TextInput(
-        label="Gifter's ID (leave empty for yours)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
-    )
-
-    receiveridd = discord.ui.TextInput(
-        label="Receiver's ID (leave empty for random)",
-        style=discord.TextStyle.short,
-        placeholder='12345678901234567890',
-        required=False,
-    )
-
-    receivertext = discord.ui.TextInput(
-        label="Receiver's message",
-        style=discord.TextStyle.short,
-        placeholder='OMG! Thanks!',
-        required=True,
+    await interaction.followup.send(
+        f"📬 DM gönderimi tamamlandı.\n"
+        f"✅ Gönderilen: {sent}\n"
+        f"⚠️ Gönderilemeyen: {failed}",
+        ephemeral=True
     )
 
 
-    async def on_submit(self, interaction: discord.Interaction):
-        self.note = ""
-        try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
+# ==========================================
+# ÖZEL DURUM DEĞİŞİNCE ROLÜ KONTROL ET
+# ==========================================
+
+@bot.event
+async def on_presence_update(before, after):
+    await update_special_role(after)
 
 
-            self.gifter = interaction.user
-            if self.gifteridd.value != "":
-                try:
-                    self.gifter = await client.fetch_user(int(self.gifteridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
-            if self.gifter.global_name == None:
-                self.gifter_globalname = self.gifter.name
-            else:
-                self.gifter_globalname = self.gifter.global_name
+# ==========================================
+# ÜYE BİLGİSİ DEĞİŞİNCE ROLÜ KONTROL ET
+# ==========================================
+
+@bot.event
+async def on_member_update(before, after):
+    await update_special_role(after)
 
 
-            members = await interaction.guild.chunk()
-            self.receiver = random.choice(members)
-            if self.receiveridd.value != "":
-                try:
-                    self.receiver = await client.fetch_user(int(self.receiveridd.value))
-                except:
-                    self.note = "Note: Invalid Receiver ID"
+# ==========================================
+# YENİ ÜYE KATILINCA KONTROL ET
+# ==========================================
+
+@bot.event
+async def on_member_join(member):
+    await update_special_role(member)
 
 
-            if self.receiver.global_name == None:
-                self.receiver_globalname = self.receiver.name
-            else:
-                self.receiver_globalname = self.receiver.global_name
+# ==========================================
+# KOMUT HATALARI
+# ==========================================
 
-            self.receiver_message = self.receivertext.value
+@nitro.error
+@robux.error
+@proof.error
+@dmall.error
+async def command_error(interaction, error):
+    if isinstance(error, app_commands.MissingPermissions):
+        message = "❌ Bu komutu yalnızca yöneticiler kullanabilir."
+    else:
+        print(f"Komut hatası: {error}")
+        message = "Bir hata oluştu. Ayarları kontrol et."
 
-            if not self.gifter.avatar:
-                self.gifter_avatar = self.gifter.default_avatar.url
-            else:
-                self.gifter_avatar = self.gifter.avatar.url
+    if interaction.response.is_done():
+        await interaction.followup.send(
+            message,
+            ephemeral=True
+        )
+    else:
+        await interaction.response.send_message(
+            message,
+            ephemeral=True
+        )
 
-            if not self.receiver.avatar:
-                self.receiver_avatar = self.receiver.default_avatar.url
-            else:
-                self.receiver_avatar = self.receiver.avatar.url
 
-            times = generate_time_range(interaction)
+# ==========================================
+# BAŞLAT
+# ==========================================
 
-            self.timestamp_1 = times[0]
-            self.timestamp_2 = times[1]
-            self.full_date = times[2]
-            proof = MinecraftPage(self.gifter_globalname, self.receiver_globalname, self.receiver_message, self.gifter_avatar, self.receiver_avatar, self.timestamp_1, self.timestamp_2, self.full_date).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-            
-            await page.setViewport({'width': 1300, 'height': 500})
+@bot.event
+async def on_ready():
+    try:
+        synced = await bot.tree.sync()
+        print(
+            f"{bot.user} aktif! "
+            f"{len(synced)} komut senkronize edildi."
+        )
+    except discord.HTTPException as error:
+        print(f"Komut senkronizasyon hatası: {error}")
 
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.goto(absolute_path)
-            screenshot_options = {
-                'path': 'proof.png',
-                'clip': {
-                    'x': random.randint(1, 8),
-                    'y': random.randint(170, 180),
-                    'width': random.randint(850, 1100),
-                    'height': random.randint(300,320)
-                }
-            }
-            await page.screenshot(screenshot_options)
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description="> **Please check your DMs!**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure you provided valid information and try again.**\n**> Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
 
-@client.tree.command(description='Generate proof for a minecraft giveaway.')
-async def minecraftproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    await interaction.response.send_modal(MinecraftModal())
-
-class BoostsPage:
-    def __init__(self, channel_name, gifter_username, timestamp_1, full_date):
-        self.actual_datetime = datetime.datetime.now()
-        self.proof = ""
-
-        self.channel_name = channel_name.replace('<', '').replace('>', '').replace('script', '')
-
-        self.gifter_username = gifter_username.replace('<', '').replace('>', '').replace('script', '')
-
-        self.timestamp_1 = timestamp_1
-        self.full_date = full_date
-        if self.full_date.startswith('0'):
-            self.full_date = self.full_date.replace('0', '', 1)
-            
-
-    def get_proof(self):
-        filename = "assets/boostproof.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('CHANNEL_NAME', self.channel_name)
-            self.html_content = self.html_content.replace('BOOSTER_USERNAME', self.gifter_username)
-            self.html_content = self.html_content.replace('TIMESTAMP_1', f'Today at {self.timestamp_1}')
-            self.html_content = self.html_content.replace('FULL_DATE', self.full_date)
-        return self.html_content
-
-class BoostsModal(discord.ui.Modal, title='14x Boosts proof generator'):
-    gifter = discord.ui.TextInput(
-        label="Booster Username (leave empty for yours)",
-        placeholder=".gg/proofgen",
-        style=discord.TextStyle.short,
-        required=False,
+if not TOKEN:
+    raise RuntimeError(
+        "TOKEN ortam değişkeni ayarlanmamış!"
     )
 
-    channel_name = discord.ui.TextInput(
-        label='Channel name (leave empty for general)',
-        style=discord.TextStyle.short,
-        placeholder='general',
-        required=False,
-        max_length=32,
-    )
-
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
-
-            if self.gifter.value == "" :
-                self.gifter = interaction.user
-                if self.gifter.global_name == None:
-                    self.gifter_globalname = self.gifter.name
-                else:
-                    self.gifter_globalname = self.gifter.global_name
-            else:
-                self.gifter_globalname = self.gifter.value
-            
-            if self.channel_name.value == "":
-                self.channelname = "general"
-            else:
-                self.channelname = self.channel_name.value
-
-            times = generate_time_range(interaction)
-
-            self.timestamp_1 = times[0]
-            self.full_date = times[2]
-            proof = BoostsPage(self.channelname, self.gifter_globalname, self.timestamp_1, self.full_date).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-            
-            await page.setViewport({'width': 1350, 'height': 700})
-
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.goto(absolute_path)
-            screenshot_options = {
-                'path': 'proof.png',
-                'clip': {
-                    'x': 0,
-                    'y': 140,
-                    'width': 950,
-                    'height': 550
-                }
-            }
-            await page.screenshot(screenshot_options)
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description="> **Please check your DMs!**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure you provided valid information and try again.**\n**> Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
-
-@client.tree.command(description='Generate proof for a 14x boost sale.')
-async def boostsproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    await interaction.response.send_modal(BoostsModal())
-
-
-class InventoryPage:
-    def __init__(self, gifter_username, nitro_amount, basic_amount):
-        self.actual_datetime = datetime.datetime.now()
-        self.proof = ""
-
-        self.gifter_username = gifter_username.replace('<', '').replace('>', '').replace('script', '')
-
-        self.nitro_amount = nitro_amount.replace('<', '').replace('>', '').replace('script', '')
-        self.basic_amount = basic_amount.replace('<', '').replace('>', '').replace('script', '')
-
-    def get_proof(self):
-        filename = "assets/inventorypage.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('USERNAME', self.gifter_username)
-            self.html_content = self.html_content.replace('BOOSTAMOUNT', self.nitro_amount)
-            self.html_content = self.html_content.replace('BASICAMOUNT', self.basic_amount)
-        return self.html_content
-
-class InventoryModal(discord.ui.Modal, title='14x Boosts proof generator'):
-    gifter = discord.ui.TextInput(
-        label="Username (leave empty for yours)",
-        placeholder="mahdi1337",
-        style=discord.TextStyle.short,
-        required=False,
-    )
-
-    nitro_amount = discord.ui.TextInput(
-        label='Boost amount',
-        style=discord.TextStyle.short,
-        placeholder='10',
-        required=False,
-        max_length=32
-    )
-
-    basic_amount = discord.ui.TextInput(
-        label='Basic amount',
-        style=discord.TextStyle.short,
-        placeholder='10',
-        required=False,
-        max_length=32
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
-
-            if self.gifter.value == "" :
-                self.gifter = interaction.user
-                if self.gifter.global_name == None:
-                    self.gifter_globalname = self.gifter.name
-                else:
-                    self.gifter_globalname = self.gifter.global_name
-            else:
-                self.gifter_globalname = self.gifter.value
-
-            proof = InventoryPage(self.gifter_globalname, self.nitro_amount.value, self.basic_amount.value).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-            
-            await page.setViewport({'width': 1350, 'height': 1100})
-
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.goto(absolute_path)
-            screenshot_options = {
-                'path': 'proof.png',
-                'clip': {
-                    'x': 0,
-                    'y': 0,
-                    'width': 1070,
-                    'height': 1150
-                }
-            }
-            await page.screenshot(screenshot_options)
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description="> **Please check your DMs!**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure you provided valid information and try again.**\n**> Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
-
-@client.tree.command(description='Generate proof of a gift inventory.')
-async def inventoryproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    await interaction.response.send_modal(InventoryModal())
-
-
-
-class PaypalPage:
-    def __init__(self, amount, receiver):
-        if ',' not in amount:
-            amount += ',00'
-        if '.' in amount:
-            amount.replace('.', ',')
-        if '$' in amount:
-            amount.replace('$', '')
-        self.amount = amount
-        self.receiver = receiver
-
-    def get_proof(self):
-        filename = "assets/paypal_page.html"
-        
-        with open(filename, 'r', encoding="utf-8") as file:
-            self.html_content = file.read()
-            self.html_content = self.html_content.replace('AMOUNT', self.amount)
-            self.html_content = self.html_content.replace('RECEIVER', self.receiver)
-        return self.html_content
-
-class PaypalModal(discord.ui.Modal, title='Paypal transaction proof generator'):
-    gifter = discord.ui.TextInput(
-        label="Receiver Name",
-        placeholder="mahdi",
-        style=discord.TextStyle.short,
-        required=True,
-    )
-
-    nitro_amount = discord.ui.TextInput(
-        label='Amount',
-        style=discord.TextStyle.short,
-        placeholder='10',
-        required=True,
-        max_length=32
-    )
-
-    async def on_submit(self, interaction: discord.Interaction):
-        try:
-            await interaction.response.defer(ephemeral=False, thinking=True) 
-
-            proof = PaypalPage(self.nitro_amount.value, self.gifter.value).get_proof()
-            with open("assets/temp.html", "w", encoding="utf-8") as f:
-                f.write(proof)
-                
-            browser = await pyppeteer.launch(executablePath="chrome-win64/chrome.exe")
-            page = await browser.newPage()
-
-            absolute_path = f'file://{os.path.abspath("assets/temp.html")}'
-            await page.setViewport({'width': 1280, 'height': 1024})
-            await page.goto(absolute_path)
-            await page.screenshot({'path': 'proof.png', 'fullPage': True})
-            await browser.close()
-            
-            embed = discord.Embed(color=0x717CDA, title="Success", description="> **Please check your DMs!**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            await interaction.user.send(file=discord.File('proof.png'))
-            
-        except Exception:
-            embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! Something went wrong, please make sure you provided valid information and try again.**\n**> Check out <#1256873254153355326> for comon errors and solutions.**")
-            embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-            embed.set_footer(text="PekkleDev")
-            await interaction.followup.send(embed=embed)
-            traceback.print_exc()
-
-@client.tree.command(description='Generate proof of a paypal transaction.')
-async def paypalproof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    await interaction.response.send_modal(PaypalModal())
-
-
-
-
-
-
-@client.tree.command(description='See all the proof generator commands.')
-async def proof(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    embed = discord.Embed(color=0x717CDA, title="Proof Generator", description="""
-> **/nitroproof**
-> **/inventoryproof**
-> **/robuxproof**
-> **/minecraftproof**
-> **/paypalproof**
-                                           
-> ~~**/bloxfruitsproof**~~ - COMING SOON
-> ~~**/cashappproof**~~ - COMING SOON
-""")
-    embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-    embed.set_footer(text="PekkleDev")
-    await interaction.response.send_message(embed=embed, delete_after=10)
-
-@client.tree.command(description='See all the proof generator commands.')
-async def help(interaction: discord.Interaction):
-    if interaction.channel.id not in channels:
-        embed = discord.Embed(color=0x717CDA, title="Error", description="> **Oops! You can't use this command here. Please go to <#1256872146525749329>.**")
-        embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-        embed.set_footer(text="PekkleDev")
-        await interaction.response.send_message(embed=embed)
-        return
-    embed = discord.Embed(color=0x717CDA, title="Proof Generator", description="""
-> **/nitroproof**
-> **/inventoryproof**
-> **/robuxproof**
-> **/minecraftproof**
-> **/paypalproof**
-                                           
-> ~~**/bloxfruitsproof**~~ - COMING SOON
-> ~~**/cashappproof**~~ - COMING SOON
-""")
-    embed.set_image(url="https://eu-central.storage.cloudconvert.com/tasks/fdd4b55f-0f2c-4ebd-8fcc-76aca2ba5049/Sanrio_Characters_Pekkle_Image002%20%281%29.png?X-Amz-Algorithm=AWS4-HMAC-SHA256&X-Amz-Content-Sha256=UNSIGNED-PAYLOAD&X-Amz-Credential=cloudconvert-production%2F20241024%2Ffra%2Fs3%2Faws4_request&X-Amz-Date=20241024T155233Z&X-Amz-Expires=86400&X-Amz-Signature=150afffe92ba7e3b7315f782c9db3cc34ceb20bbf77e1429237792cc07a899b1&X-Amz-SignedHeaders=host&response-content-disposition=inline%3B%20filename%3D%22Sanrio_Characters_Pekkle_Image002%20%281%29.png%22&response-content-type=image%2Fpng&x-id=GetObject")
-    embed.set_footer(text="PekkleDev")
-    await interaction.response.send_message(embed=embed, delete_after=10)
-
-client.run(token)
+bot.run(TOKEN)

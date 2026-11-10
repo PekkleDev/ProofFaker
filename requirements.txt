@@ -1,9 +1,4 @@
-<<<<<<< HEAD
-discord.py==2.4.1
-pyppeteer==1.0.2
-pytz==2023.3
-=======
-discord.py==2.4.1
-pyppeteer==1.0.2
-pytz==2023.3
->>>>>>> 10ec784 (Initial Commit)
+discord.py>=2.3.0
+pyppeteer>=1.0.2
+pytz>=2023.3
+
